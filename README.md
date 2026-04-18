@@ -1,4 +1,4 @@
-# Gender API (Profile Generator)
+# profiles API (Profile Generator)
 
 This is a robust RESTful API built in Go that generates comprehensive demographic profiles based on a person's name. It acts as an orchestration layer, combining data from three external APIs ([Genderize](https://genderize.io/), [Agify](https://agify.io/), and [Nationalize](https://nationalize.io/)) to predict a person's gender, age, age group, and nationality. 
 

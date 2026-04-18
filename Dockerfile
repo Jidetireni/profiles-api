@@ -16,6 +16,9 @@ RUN go mod download
 # Copy the source code into the container
 COPY . .
 
+# Install goose for database migrations
+RUN go install github.com/pressly/goose/v3/cmd/goose@latest
+
 # Build the Go app with CGO disabled for a statically linked binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o server ./cmd
 
@@ -28,10 +31,12 @@ WORKDIR /app
 # Copy the Pre-built binary file and CA certificates from the previous stage
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /go/bin/goose /usr/local/bin/goose
 COPY --from=builder /app/server .
+COPY --from=builder /app/internals/sql/migrations ./internals/sql/migrations
 
 # Expose port 8000 to the outside world
 EXPOSE 8000
 
 # Command to run the executable
-CMD ["./server"]
+CMD ["sh", "-c", "goose -dir internals/sql/migrations postgres \"${DB_URL}\" up && ./server"]

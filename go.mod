@@ -4,6 +4,7 @@ go 1.25.4
 
 require (
 	github.com/Masterminds/squirrel v1.5.4
+	github.com/biter777/countries v1.7.5
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0
@@ -15,7 +16,6 @@ require (
 )
 
 require (
-	github.com/biter777/countries v1.7.5 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/lann/builder v0.0.0-20180802200727-47ae307949d0 // indirect

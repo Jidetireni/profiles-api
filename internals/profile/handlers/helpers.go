@@ -263,21 +263,36 @@ func resolveAgeGroup(set map[string]bool, filter *repository.ProfileRepositoryFi
 
 func resolveAgeRange(tokens []string, filter *repository.ProfileRepositoryFilter) {
 	for i, token := range tokens {
-		if i+1 >= len(tokens) {
-			break
-		}
-		val, err := strconv.Atoi(tokens[i+1])
-		if err != nil {
+		isMin := lo.Contains([]string{"above", "over", "older"}, token)
+		isMax := lo.Contains([]string{"below", "under", "younger"}, token)
+
+		if !isMin && !isMax {
 			continue
 		}
-		switch token {
-		case "above", "over", "older":
-			filter.MinAge = lo.ToPtr(val)
-		case "below", "under", "younger":
-			filter.MaxAge = lo.ToPtr(val)
+
+		// Look for a number near the trigger (up to 2 positions away)
+		var val int
+		var found bool
+
+		// Search around the trigger
+		indices := []int{i + 1, i + 2, i - 1, i - 2}
+		for _, idx := range indices {
+			if idx >= 0 && idx < len(tokens) {
+				if v, err := strconv.Atoi(tokens[idx]); err == nil {
+					val, found = v, true
+					break
+				}
+			}
+		}
+
+		if found {
+			if isMin {
+				filter.MinAge = lo.ToPtr(val)
+			} else {
+				filter.MaxAge = lo.ToPtr(val)
+			}
 		}
 	}
-
 }
 
 func resolveAge(set map[string]bool, filter *repository.ProfileRepositoryFilter) {

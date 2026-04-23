@@ -1,171 +1,80 @@
-# Profiles API (Profile Generator)
+# Profiles API
 
-This is a robust RESTful API built in Go that generates comprehensive demographic profiles based on a person's name. It acts as an orchestration layer, combining data from three external APIs ([Genderize](https://genderize.io/), [Agify](https://agify.io/), and [Nationalize](https://nationalize.io/)) to predict a person's gender, age, age group, and nationality. 
+This is a robust RESTful API built in Go that generates comprehensive demographic profiles based on a person's name. It acts as an orchestration layer, combining data from three external APIs ([Genderize](https://genderize.io/), [Agify](https://agify.io/), and [Nationalize](https://nationalize.io/)) to predict a person's gender, age, age group, and nationality.
 
 To ensure high performance and reliability, the application utilizes **Redis** for caching and **PostgreSQL** for persistent storage.
 
 ## Features
 
 - **Data Orchestration**: Concurrently fetches real-time demographic predictions from Genderize, Agify, and Nationalize APIs.
+- **Natural Language Search**: Powerful rule-based parser that converts plain English queries into database filters.
 - **Smart Categorization**: Automatically categorizes profiles into `age_group`s (`child`, `teenager`, `adult`, `senior`) based on the predicted age.
-- **Caching Layer**: Utilizes Redis to cache API responses, drastically reducing latency and external API rate limit consumption for repeated requests.
-- **Persistent Storage**: Stores generated profiles in a PostgreSQL database, allowing for complex querying and long-term data retention.
-- **Advanced Filtering**: Search and filter saved profiles by gender, country, and age group.
-- **Containerized Setup**: Fully dockerized environment with `docker-compose` for zero-friction local development (includes App, Postgres, and Redis).
-- **Database Migrations**: Automated schema management using `goose`.
+- **Caching Layer**: Utilizes Redis to cache API responses, drastically reducing latency and external API rate limit consumption.
+- **Containerized Setup**: Fully dockerized environment for seamless local development.
 
-## Tech Stack
+## Natural Language Query (Search)
 
-- **Language**: Go 1.22+
-- **Database**: PostgreSQL (managed via `sqlx` and `squirrel` for query building)
-- **Caching**: Redis
-- **Router**: `go-chi/chi`
-- **Migrations**: `goose`
-- **Infrastructure**: Docker & Docker Compose
+The API includes a core feature that allows users to search for profiles using plain English queries via the `GET /api/profiles/search?q=...` endpoint.
 
-## Prerequisites
+### Supported Keywords & Mappings
+The parser uses a deterministic, rule-based approach to extract filters:
 
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose (Recommended)
-- [Go](https://golang.org/dl/) 1.22+ (if running natively without Docker)
+| Keyword Category | Examples | Logic / Mapping |
+| :--- | :--- | :--- |
+| **Gender** | `male`, `males`, `female`, `females` | Sets the `gender` filter. If both are mentioned, the filter is cleared. |
+| **Age Keywords** | `young` | Specifically maps to a range of **16–24** years. |
+| **Age Groups** | `child`, `teenager`, `adult`, `senior` | Maps directly to the stored `age_group` column. |
+| **Age Ranges** | `above 30`, `20 and above`, `younger than 18` | Detects numeric values within a 2-word radius of triggers like `above`, `over`, `under`, `below`. |
+| **Location** | `from Nigeria`, `in United States` | Detects country names following `from` or `in`. |
 
-## Environment Variables
+### How the Logic Works
+1. **Normalization**: The query is converted to lowercase, stripped of punctuation, and tokenized into a word set and a sequence of tokens.
+2. **Gender/Age Group Resolution**: The parser checks for the presence of specific keywords in the word set (e.g., "males" -> gender=male).
+3. **Age Range Resolution**: It scans the token sequence for age triggers. When a trigger is found, it looks at the surrounding tokens (up to 2 steps forward or backward) for a numeric value. This allows for flexible phrasing like "above 20" or "20 and above".
+4. **Keyword Mapping**: Fixed keywords like "young" are applied to set specific numeric bounds.
+5. **Country Detection (Sliding Window)**:
+   - The parser looks for the triggers "from" or "in".
+   - It performs a **sliding window search** on the words following the trigger (checking 3-word, then 2-word, then 1-word combinations) against a comprehensive ISO-3166 country database.
+   - Example: For "from south africa", it will first check "south africa", find a match, and resolve to country code `ZA`.
 
-Create a `.env` file in the root directory with the following structure:
+### Limitations & Edge Cases
+- **No Semantic Parsing**: The parser is rule-based and does not understand context. For example, "people who like Nigeria" might be misinterpreted as "people from Nigeria" if the trigger words are present.
+- **Ambiguous Genders**: If a query contains both "male" and "female" (e.g., "males and females"), the gender filter is ignored entirely to return results for both.
+- **Precedence**: Specific age ranges (e.g., "above 30") can be overwritten if the keyword "young" is also present, as "young" has a strict priority definition (16-24).
+- **Triggers**: Locations are only resolved if preceded by the specific triggers "from" or "in". Simply typing "Nigeria" in the search query will not trigger the country filter.
+- **Numeric Radius**: Age ranges only work if the number is within 2 words of the trigger word (e.g., "above 20" and "20 and above" work, but "above the age of exactly 20" does not).
 
-```env
-HOST=0.0.0.0
-PORT=8000
-ENV=development
-GENDERIZED_API_BASE_URL=https://api.genderize.io
-AGIFY_API_BASE_URL=https://api.agify.io
-NATIONAIZE_API_BASE_URL=https://api.nationalize.io
-DB_URL=postgres://admin:secret@db:5432/gender_api?sslmode=disable
-REDIS_URL=redis:6379
-```
-*(Note: Change `db` and `redis` hosts to `localhost` if running the Go app natively outside of Docker).*
-
-## Running the Application
-
-### The Easy Way (Docker Compose)
-
-The simplest way to run the entire stack (API, PostgreSQL, and Redis) is using Docker Compose:
-
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd gender-api
-   ```
-2. Start the services:
-   ```bash
-   docker-compose up --build
-   ```
-
-The API will be available at `http://localhost:8000`. Database migrations will run automatically on startup.
-
-### Running Natively (Go + External DB/Redis)
-
-If you prefer to run the Go application natively, ensure you have PostgreSQL and Redis instances running.
-
-1. Install dependencies:
-   ```bash
-   go mod download
-   ```
-2. Apply migrations using Goose:
-   ```bash
-   goose -dir internals/sql/migrations postgres "postgres://<user>:<pass>@localhost:5432/gender_api?sslmode=disable" up
-   ```
-3. Start the server:
-   ```bash
-   go run ./cmd
-   ```
 
 ## API Documentation
 
 ### 1. Create Profile
-
-Generates a new profile for a given name, caches it, and stores it in the database.
-
 **Endpoint:** `POST /api/profiles`
+**Body:** `{"name": "peter"}`
 
-**Request Body:**
-```json
-{
-  "name": "peter"
-}
-```
+### 2. Natural Language Search
+**Endpoint:** `GET /api/profiles/search`
+**Param:** `q` (string)
+**Example:** `/api/profiles/search?q=young males from nigeria`
 
-**Success Response (201 Created or 200 OK if already exists):**
-```json
-{
-  "status": "success",
-  "data": {
-    "id": "019da188-7d51-72c8-aac6-8462cbc09a3e",
-    "name": "peter",
-    "gender": "male",
-    "gender_probability": 0.99,
-    "sample_size": 165452,
-    "age": 42,
-    "age_group": "adult",
-    "country_id": "US",
-    "country_probability": 0.08,
-    "created_at": "2024-04-18T16:59:30.003844Z"
-  }
-}
-```
-
-### 2. Get Profile by ID
-
-Retrieves a specific profile by its UUID.
-
-**Endpoint:** `GET /api/profiles/{id}`
-
-**Success Response (200 OK):**
-```json
-{
-  "status": "success",
-  "data": {
-    "id": "019da188-7d51-72c8-aac6-8462cbc09a3e",
-    "name": "peter",
-    "gender": "male",
-    ...
-  }
-}
-```
-
-### 3. List Profiles
-
-Retrieves a paginated/filtered list of stored profiles (returns a simplified profile view).
-
+### 3. List Profiles (Standard Filtering)
 **Endpoint:** `GET /api/profiles`
+**Params:** `gender`, `country_id`, `age_group`, `min_age`, `max_age`
 
-**Query Parameters (Optional):**
-- `gender` (string): Filter by gender (e.g., `male`, `female`).
-- `country_id` (string): Filter by 2-letter country code (e.g., `US`, `GH`).
-- `age_group` (string): Filter by age group (`child`, `teenager`, `adult`, `senior`).
+---
 
-**Success Response (200 OK):**
-```json
-{
-  "status": "success",
-  "count": 1,
-  "data": [
-    {
-      "id": "019da188-7d51-72c8-aac6-8462cbc09a3e",
-      "name": "peter",
-      "gender": "male",
-      "age": 42,
-      "age_group": "adult",
-      "country_id": "US"
-    }
-  ]
-}
-```
+## Technical Setup
 
-### 4. Delete Profile
+### Prerequisites
+- Docker & Docker Compose
+- Go 1.25+
 
-Removes a profile from both the database and the Redis cache.
-
-**Endpoint:** `DELETE /api/profiles/{id}`
-
-**Success Response (204 No Content)**
-*(No body returned)*
+### Running the Application
+1. **Environment**: Create a `.env` file based on the example in the repository.
+2. **Start Services**:
+   ```bash
+   docker-compose up --build
+   ```
+3. **Seed Data** (Optional):
+   ```bash
+   go run cmd/seed/main.go
+   ```
